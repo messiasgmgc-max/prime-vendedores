@@ -13,11 +13,14 @@ import {
   AlertTriangle,
   History,
   Trash2,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { CameraCapture } from "@/components/CameraCapture";
 import { SignaturePad } from "@/components/SignaturePad";
 import { ReceiptModal } from "@/components/ReceiptModal";
+import { PasswordModal } from "@/components/PasswordModal";
 import {
   formatCurrencyBRL,
   SaleReceiptData,
@@ -43,11 +46,17 @@ export default function Home() {
   } | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Histórico local simples para o vendedor consultar o que já fez hoje
+  // Histórico local e proteção com senha do cadeado (PIN: 191215)
   const [recentSales, setRecentSales] = useState<
     Array<{ id: string; nsu: string; value: string; product: string; time: string; image: string }>
   >([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"history" | "receipt" | null>(null);
+
+  // Comprovante recém-gerado aguardando liberação do cadeado
+  const [savedSuccessMessage, setSavedSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -198,10 +207,22 @@ export default function Home() {
         }
       })();
 
+      // Limpa os campos para a próxima venda ágil
+      setValue("");
+      setProduct("");
+      setNsu("");
+      setClientPhoto(null);
+      setSignature(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+
+      // Guarda os dados do comprovante recém-gerado
       setReceiptModalData({
         image: consolidatedImage,
         saleData,
       });
+
+      // Exibe mensagem de sucesso protegida
+      setSavedSuccessMessage(`Comprovante ${saleId} gravado com sucesso! Clique no cadeado com a senha para visualizar.`);
     } catch (err: any) {
       console.error(err);
       setValidationError("Erro ao processar comprovante: " + (err.message || "Tente novamente"));
@@ -240,17 +261,55 @@ export default function Home() {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowHistory(!showHistory)}
-          className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-xs font-semibold text-slate-300 flex items-center gap-1.5 active:scale-95 transition-transform"
-        >
-          <History className="w-3.5 h-3.5 text-sky-400" />
-          {recentSales.length > 0 && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <div className="flex items-center gap-2">
+          {/* Botão Cadeado Seguro */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isUnlocked) {
+                setShowHistory(!showHistory);
+              } else {
+                setPendingAction("history");
+                setIsPasswordModalOpen(true);
+              }
+            }}
+            className={`p-2 rounded-xl border flex items-center gap-1.5 text-xs font-bold transition-all active:scale-95 ${
+              isUnlocked
+                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
+                : "bg-slate-900 hover:bg-slate-850 border-slate-700 text-slate-300"
+            }`}
+            title={isUnlocked ? "Histórico desbloqueado" : "Acessar histórico com senha"}
+          >
+            {isUnlocked ? (
+              <>
+                <Unlock className="w-4 h-4 text-emerald-400" />
+                <span>Histórico</span>
+              </>
+            ) : (
+              <>
+                <Lock className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">Acesso</span>
+              </>
+            )}
+            {recentSales.length > 0 && !isUnlocked && (
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+            )}
+          </button>
+
+          {isUnlocked && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsUnlocked(false);
+                setShowHistory(false);
+              }}
+              className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-850 rounded-xl text-xs font-semibold"
+              title="Bloquear novamente"
+            >
+              <Lock className="w-3.5 h-3.5" />
+            </button>
           )}
-          Histórico
-        </button>
+        </div>
       </header>
 
       {/* Histórico Deslizante / Recolhível */}
@@ -313,6 +372,34 @@ export default function Home() {
 
       {/* Conteúdo Principal (Single-Screen Mobile First) */}
       <div className="w-full max-w-lg px-4 pt-3 flex flex-col gap-4">
+        {/* Banner de Sucesso de Venda Salva (Protegido por Senha) */}
+        {savedSuccessMessage && (
+          <div className="p-3.5 bg-emerald-500/15 border-2 border-emerald-500/40 text-emerald-300 rounded-2xl flex items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg">
+                <CheckCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">Venda Salva com Sucesso!</p>
+                <p className="text-[11px] text-emerald-400/90 font-medium">
+                  Comprovante protegido contra acesso não autorizado.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingAction("receipt");
+                setIsPasswordModalOpen(true);
+              }}
+              className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 active:scale-95 transition-all shadow-md shrink-0"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              Ver Comprovante
+            </button>
+          </div>
+        )}
+
         {/* Banner de Validação / Erro */}
         {validationError && (
           <div className="p-3 bg-red-500/10 border-2 border-red-500/30 text-red-300 rounded-xl flex items-center gap-2 text-xs font-medium animate-bounce">
@@ -429,8 +516,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Modal de Comprovante Consolidado */}
-      {receiptModalData && (
+      {/* Modal de Comprovante Consolidado (Só abre se desbloqueado com a senha 191215) */}
+      {receiptModalData && isUnlocked && (
         <ReceiptModal
           receiptImage={receiptModalData.image}
           data={receiptModalData.saleData}
@@ -438,6 +525,23 @@ export default function Home() {
           onNewSale={handleResetForm}
         />
       )}
+
+      {/* Modal de Senha do Cadeado (PIN 191215) */}
+      <PasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => {
+          setIsPasswordModalOpen(false);
+          setPendingAction(null);
+        }}
+        onSuccess={() => {
+          setIsUnlocked(true);
+          setIsPasswordModalOpen(false);
+          if (pendingAction === "history") {
+            setShowHistory(true);
+          }
+          setPendingAction(null);
+        }}
+      />
     </main>
   );
 }
