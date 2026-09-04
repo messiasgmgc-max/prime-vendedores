@@ -1,0 +1,18 @@
+﻿{
+  "name": "Prime Comprovantes Anti-Fraude",
+  "short_name": "AntiFraude",
+  "description": "Comprovantes com foto e assinatura digital de entregas presenciais para vendedores de rua",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#090d16",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
