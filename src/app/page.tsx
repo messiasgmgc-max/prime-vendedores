@@ -15,6 +15,9 @@ import {
   Trash2,
   Lock,
   Unlock,
+  RefreshCw,
+  Cloud,
+  CloudCheck,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { CameraCapture } from "@/components/CameraCapture";
@@ -58,7 +61,59 @@ export default function Home() {
   // Comprovante recém-gerado aguardando liberação do cadeado
   const [savedSuccessMessage, setSavedSuccessMessage] = useState<string | null>(null);
 
+  // Estado de status da sincronização com a nuvem (Supabase)
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<"idle" | "saving" | "synced" | "error">("idle");
+  const [cloudErrorMsg, setCloudErrorMsg] = useState<string | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // Carrega vendas do Supabase
+  const loadSalesFromSupabase = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const { data, error } = await supabase
+        .from("comprovantes")
+        .select("id, protocolo, valor, produto, nsu, data_venda, comprovante_consolidado_url, created_at")
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.warn("Erro ao buscar comprovantes do Supabase:", error.message);
+      } else if (data && data.length > 0) {
+        const formattedFromDb = data.map((item: any) => {
+          const dateObj = new Date(item.data_venda || item.created_at);
+          const formatted = isNaN(dateObj.getTime())
+            ? item.data_venda || ""
+            : dateObj.toLocaleString("pt-BR", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+          return {
+            id: item.protocolo || item.id,
+            nsu: item.nsu,
+            value: item.valor,
+            product: item.produto,
+            time: formatted,
+            image: item.comprovante_consolidado_url,
+          };
+        });
+
+        setRecentSales(formattedFromDb);
+        try {
+          localStorage.setItem("prime_recent_sales", JSON.stringify(formattedFromDb));
+        } catch (e) {}
+      }
+    } catch (e) {
+      console.warn("Erro ao carregar do Supabase:", e);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
   useEffect(() => {
+    // 1. Tenta carregar do cache local
     try {
       const saved = localStorage.getItem("prime_recent_sales");
       if (saved) {
@@ -67,6 +122,9 @@ export default function Home() {
     } catch (e) {
       console.warn("Falha ao recuperar histórico local", e);
     }
+
+    // 2. Busca os dados reais e atualizados do Supabase
+    loadSalesFromSupabase();
   }, []);
 
   const saveToLocalHistory = (entry: {
@@ -77,7 +135,7 @@ export default function Home() {
     time: string;
     image: string;
   }) => {
-    const updated = [entry, ...recentSales.slice(0, 9)];
+    const updated = [entry, ...recentSales.filter((s) => s.id !== entry.id).slice(0, 19)];
     setRecentSales(updated);
     try {
       localStorage.setItem("prime_recent_sales", JSON.stringify(updated));
@@ -177,7 +235,10 @@ export default function Home() {
         image: consolidatedImage,
       });
 
-      // Sincronização em nuvem no Supabase em segundo plano
+      // Sincronização em nuvem no Supabase
+      setCloudSyncStatus("saving");
+      setCloudErrorMsg(null);
+
       (async () => {
         try {
           const { error } = await supabase
@@ -198,12 +259,19 @@ export default function Home() {
             ]);
 
           if (error) {
-            console.warn("Supabase: Tabela 'comprovantes' ainda não criada ou erro de inserção:", error.message);
+            console.error("Supabase insert error:", error);
+            setCloudSyncStatus("error");
+            setCloudErrorMsg(error.message);
           } else {
             console.log("Comprovante sincronizado com sucesso no Supabase!");
+            setCloudSyncStatus("synced");
+            // Atualiza a lista com o dado confirmado do banco
+            loadSalesFromSupabase();
           }
-        } catch (err) {
-          console.warn("Erro de conexão com Supabase:", err);
+        } catch (err: any) {
+          console.error("Erro de conexão com Supabase:", err);
+          setCloudSyncStatus("error");
+          setCloudErrorMsg(err?.message || "Falha na rede");
         }
       })();
 
@@ -317,22 +385,41 @@ export default function Home() {
         <div className="w-full max-w-lg px-4 pt-3">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1">
-                <FileCheck className="w-3.5 h-3.5 text-emerald-400" /> Últimos Comprovantes
-              </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setRecentSales([]);
-                  localStorage.removeItem("prime_recent_sales");
-                }}
-                className="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1"
-              >
-                <Trash2 className="w-3 h-3" /> Limpar
-              </button>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                  <FileCheck className="w-3.5 h-3.5 text-emerald-400" /> Histórico (Supabase + Local)
+                </h3>
+                {isLoadingHistory && (
+                  <RefreshCw className="w-3 h-3 text-sky-400 animate-spin" />
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={loadSalesFromSupabase}
+                  disabled={isLoadingHistory}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 active:scale-95"
+                  title="Recarregar do Supabase"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isLoadingHistory ? "animate-spin" : ""}`} />
+                  Atualizar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecentSales([]);
+                    localStorage.removeItem("prime_recent_sales");
+                  }}
+                  className="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 active:scale-95"
+                >
+                  <Trash2 className="w-3 h-3" /> Limpar
+                </button>
+              </div>
             </div>
             {recentSales.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-2">Nenhum comprovante salvo ainda hoje.</p>
+              <p className="text-xs text-slate-400 text-center py-2">
+                {isLoadingHistory ? "Carregando dados da nuvem..." : "Nenhum comprovante salvo ainda hoje."}
+              </p>
             ) : (
               <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
                 {recentSales.map((sale) => (
@@ -380,9 +467,28 @@ export default function Home() {
                 <CheckCircle className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold text-white">Venda Salva com Sucesso!</p>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  Venda Salva com Sucesso!
+                  {cloudSyncStatus === "saving" && (
+                    <span className="text-[10px] text-sky-400 flex items-center gap-1 font-normal">
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Salvando na nuvem...
+                    </span>
+                  )}
+                  {cloudSyncStatus === "synced" && (
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono font-bold bg-emerald-500/20 px-1.5 py-0.2 rounded">
+                      ✓ Supabase OK
+                    </span>
+                  )}
+                  {cloudSyncStatus === "error" && (
+                    <span className="text-[10px] text-amber-400 flex items-center gap-1 font-bold">
+                      ⚠ Salvo localmente (offline)
+                    </span>
+                  )}
+                </p>
                 <p className="text-[11px] text-emerald-400/90 font-medium">
-                  Comprovante protegido contra acesso não autorizado.
+                  {cloudSyncStatus === "error" && cloudErrorMsg
+                    ? `Erro Supabase: ${cloudErrorMsg}`
+                    : "Comprovante protegido contra acesso não autorizado."}
                 </p>
               </div>
             </div>
